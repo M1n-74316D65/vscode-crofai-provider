@@ -1,0 +1,10 @@
+src
+.git
+.vscode-test.*
+.gitignore
+.prettierignore
+.prettierrc
+eslint.config.mjs
+tsconfig.json
+*.vsix
+tsconfig.tsbuildinfo
