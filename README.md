@@ -1,5 +1,7 @@
 # CrofAI Provider for GitHub Copilot
 
+> **Community extension** — not affiliated with or officially supported by CrofAI.
+
 **Powerful models. Crazy cheap pricing.** — directly inside GitHub Copilot Chat.
 
 CrofAI gives you access to the best open-weight models at the cheapest prices on the market. This extension wires them into VS Code's native model picker so you can use them anywhere GitHub Copilot Chat works — chat, agent mode, inline edits, and more.

@@ -2,8 +2,8 @@
   "name": "crof-ai-provider",
   "publisher": "m1n",
   "displayName": "CrofAI Provider for GitHub Copilot",
-  "description": "Use CrofAI's GLM models with GitHub Copilot in VS Code",
-  "version": "0.1.0",
+  "description": "Community extension. Use CrofAI's open-weight models with GitHub Copilot in VS Code.",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.105.0"
   },
@@ -131,13 +131,14 @@
   ],
   "main": "./out/extension.js",
   "scripts": {
-    "vscode:prepublish": "bun run compile",
-    "compile": "bunx tsc -p ./",
+    "vscode:prepublish": "node esbuild.js --production",
+    "compile": "node esbuild.js",
+    "compile:tsc": "bunx tsc -p ./ --noEmit",
     "lint": "bunx eslint",
     "format": "bunx prettier --write .",
-    "watch": "bunx tsc --watch -p ./",
-    "test": "bun run compile && vscode-test",
-    "package": "bunx vsce package --out crof-ai-provider.vsix"
+    "watch": "node esbuild.js --watch",
+    "test": "node esbuild.js && vscode-test",
+    "package": "vsce package --out crof-ai-provider.vsix"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
@@ -151,6 +152,7 @@
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.2.2",
+    "esbuild": "^0.28.0",
     "eslint": "^9.13.0",
     "prettier": "^3.1.0",
     "typescript": "^5.9.2",

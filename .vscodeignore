@@ -1,10 +1,7 @@
-src
-.git
-.vscode-test.*
-.gitignore
-.prettierignore
-.prettierrc
-eslint.config.mjs
-tsconfig.json
-*.vsix
-tsconfig.tsbuildinfo
+**
+!out/extension.js
+!assets/icon.png
+!assets/walkthrough/**
+!LICENSE
+!README.md
+!package.json
