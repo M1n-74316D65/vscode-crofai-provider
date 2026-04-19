@@ -109,4 +109,4 @@ Your API key is stored in VS Code's encrypted `SecretStorage` and never written 
 
 ## License
 
-MIT
+[EUPL-1.2](LICENSE)

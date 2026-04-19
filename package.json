@@ -19,7 +19,7 @@
     "theme": "dark"
   },
   "homepage": "https://crof.ai",
-  "license": "MIT",
+  "license": "EUPL-1.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/CrofAI/crof-ai-provider"
