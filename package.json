@@ -3,7 +3,7 @@
   "publisher": "m1n",
   "displayName": "CrofAI Provider for GitHub Copilot",
   "description": "Community extension. Use CrofAI's open-weight models with GitHub Copilot in VS Code.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "engines": {
     "vscode": "^1.105.0"
   },

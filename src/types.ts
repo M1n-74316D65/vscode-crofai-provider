@@ -17,6 +17,7 @@ export const CrofAIModelSchema = z.object({
   speed: z.number().optional(),
   custom_reasoning: z.boolean().optional(),
   reasoning_effort: z.boolean().optional(),
+  vision: z.boolean().optional(),
 });
 
 export type CrofAIModel = z.infer<typeof CrofAIModelSchema>;

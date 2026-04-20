@@ -3,6 +3,7 @@ import type { CancellationToken, LanguageModelChatInformation } from 'vscode';
 import { tryit } from 'radash';
 import {
   CrofAIModelsResponseSchema,
+  type CrofAIModel,
   type CrofAIModelsResponse,
   DEFAULT_CONTEXT_LENGTH,
   DEFAULT_MAX_OUTPUT_TOKENS,
@@ -36,8 +37,9 @@ const REASONING_CONFIGURATION_SCHEMA = {
   },
 } as const;
 
-function isVisionModel(modelId: string): boolean {
-  const id = modelId.toLowerCase();
+function isVisionModel(model: CrofAIModel): boolean {
+  if (model.vision === true) return true;
+  const id = model.id.toLowerCase();
   return VISION_MODEL_PATTERNS.some((pattern) => id.includes(pattern));
 }
 
@@ -87,8 +89,25 @@ export function getEffortFromModelId(modelId: string): {
   return { baseModelId: modelId, effort: undefined };
 }
 
+const MODELS_CACHE_TTL_MS = 5 * 60 * 1000;
+const FETCH_MODELS_MAX_RETRIES = 2;
+const FETCH_MODELS_BASE_DELAY_MS = 500;
+const FETCH_MODELS_TIMEOUT_MS = 30_000;
+
+const modelMaxOutputTokens = new Map<string, number>();
+
+export function getModelMaxOutputTokens(modelId: string): number {
+  return modelMaxOutputTokens.get(modelId) ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 export class CrofAIModelsService {
+  private _cache: { data: CrofAIModelsResponse; apiKey: string; expiresAt: number } | undefined;
+
   constructor(private readonly userAgent: string) {}
+
+  invalidateCache(): void {
+    this._cache = undefined;
+  }
 
   async ensureApiKey(secrets: vscode.SecretStorage, silent: boolean): Promise<string | undefined> {
     let apiKey = await secrets.get('crofai.apiKey');
@@ -108,52 +127,85 @@ export class CrofAIModelsService {
   }
 
   async fetchModels(apiKey: string): Promise<CrofAIModelsResponse> {
-    try {
-      const response = await fetch(`${BASE_URL}/models`, {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'User-Agent': this.userAgent,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('[CrofAI Provider] Failed to fetch CrofAI models', {
-          status: response.status,
-          statusText: response.statusText,
-          detail: errorText,
-        });
-        vscode.window.showInformationMessage(
-          `Failed to fetch models from CrofAI (${response.status}): ${response.statusText || 'Network error'}. Please check your API key.`
-        );
-        throw new Error(
-          `Failed to fetch CrofAI models: ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
-        );
-      }
-
-      const rawData = await response.json();
-      const [err, data] = tryit(() => CrofAIModelsResponseSchema.parse(rawData))();
-      if (err) {
-        console.error('[CrofAI Provider] Model data validation failed:', err);
-        vscode.window.showInformationMessage(
-          'Failed to parse model data from CrofAI API. The API format may have changed.'
-        );
-        throw new Error(
-          `Invalid API response: ${err instanceof Error ? err.message : 'Unknown error'}`
-        );
-      }
-
-      if (!data?.data || data.data.length === 0) {
-        throw new Error('No models available');
-      }
-
-      return data;
-    } catch (error) {
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error('Unknown error fetching models');
+    const now = Date.now();
+    if (this._cache && this._cache.apiKey === apiKey && this._cache.expiresAt > now) {
+      return this._cache.data;
     }
+
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= FETCH_MODELS_MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delay = FETCH_MODELS_BASE_DELAY_MS * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      try {
+        const response = await fetch(`${BASE_URL}/models`, {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'User-Agent': this.userAgent,
+          },
+          signal: AbortSignal.timeout(FETCH_MODELS_TIMEOUT_MS),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('[CrofAI Provider] Failed to fetch CrofAI models', {
+            status: response.status,
+            statusText: response.statusText,
+            detail: errorText,
+          });
+          const err = new Error(
+            `Failed to fetch CrofAI models: ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
+          );
+          // Don't retry auth errors
+          if (response.status === 401 || response.status === 403) {
+            vscode.window.showInformationMessage(
+              `Failed to fetch models from CrofAI (${response.status}): Please check your API key.`
+            );
+            throw err;
+          }
+          lastError = err;
+          continue;
+        }
+
+        const rawData = await response.json();
+        const [parseErr, data] = tryit(() => CrofAIModelsResponseSchema.parse(rawData))();
+        if (parseErr) {
+          console.error('[CrofAI Provider] Model data validation failed:', parseErr);
+          vscode.window.showInformationMessage(
+            'Failed to parse model data from CrofAI API. The API format may have changed.'
+          );
+          throw new Error(
+            `Invalid API response: ${parseErr instanceof Error ? parseErr.message : 'Unknown error'}`
+          );
+        }
+
+        if (!data?.data || data.data.length === 0) {
+          throw new Error('No models available');
+        }
+
+        this._cache = { data, apiKey, expiresAt: Date.now() + MODELS_CACHE_TTL_MS };
+        return data;
+      } catch (error) {
+        if (error instanceof Error) {
+          // Don't retry parse/validation errors or auth errors
+          if (
+            error.message.startsWith('Invalid API response') ||
+            error.message.startsWith('No models') ||
+            error.message.includes('401') ||
+            error.message.includes('403')
+          ) {
+            throw error;
+          }
+        }
+        lastError = error;
+      }
+    }
+
+    if (lastError instanceof Error) throw lastError;
+    throw new Error('Unknown error fetching models');
   }
 
   async prepareLanguageModelChatInformation(
@@ -178,13 +230,15 @@ export class CrofAIModelsService {
       return [];
     }
 
+    modelMaxOutputTokens.clear();
     const result: LanguageModelChatInformation[] = [];
 
     for (const model of models.data) {
       const modelName = model.name || model.id;
       const contextLength = model.context_length || DEFAULT_CONTEXT_LENGTH;
       const maxTokens = model.max_completion_tokens || DEFAULT_MAX_OUTPUT_TOKENS;
-      const supportsVision = isVisionModel(model.id);
+      modelMaxOutputTokens.set(model.id, maxTokens);
+      const supportsVision = isVisionModel(model);
       const supportsThinking = model.custom_reasoning === true || model.reasoning_effort === true;
       const family = getModelFamily(model.id);
       const pricingBadge = formatPricingBadge(model.pricing);
@@ -209,7 +263,7 @@ export class CrofAIModelsService {
         detail: detailParts.join(' • '),
         version: '1.0.0',
         maxInputTokens: contextLength,
-        maxOutputTokens: maxTokens,
+        maxOutputTokens: 0,
         capabilities: {
           toolCalling: true,
           imageInput: supportsVision,

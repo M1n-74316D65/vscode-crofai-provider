@@ -26,148 +26,147 @@ export async function setModelTemperature(
 }
 
 export function getModelReasoningEffort(modelId: string): ReasoningEffort | undefined {
-	const config = vscode.workspace.getConfiguration('crofai');
-	const efforts = config.get<Record<string, ReasoningEffort>>('modelReasoningEfforts');
-	return efforts?.[modelId];
+  const config = vscode.workspace.getConfiguration('crofai');
+  const efforts = config.get<Record<string, ReasoningEffort>>('modelReasoningEfforts');
+  return efforts?.[modelId];
 }
 
 export async function setModelReasoningEffort(
-	modelId: string,
-	effort: ReasoningEffort | undefined
+  modelId: string,
+  effort: ReasoningEffort | undefined
 ): Promise<void> {
-	const config = vscode.workspace.getConfiguration('crofai');
-	const existing = config.get<Record<string, ReasoningEffort>>('modelReasoningEfforts') || {};
-	const efforts: Record<string, ReasoningEffort> = { ...existing };
+  const config = vscode.workspace.getConfiguration('crofai');
+  const existing = config.get<Record<string, ReasoningEffort>>('modelReasoningEfforts') || {};
+  const efforts: Record<string, ReasoningEffort> = { ...existing };
 
-	if (effort === undefined) {
-		delete efforts[modelId];
-	} else {
-		efforts[modelId] = effort;
-	}
+  if (effort === undefined) {
+    delete efforts[modelId];
+  } else {
+    efforts[modelId] = effort;
+  }
 
-	await config.update('modelReasoningEfforts', efforts, vscode.ConfigurationTarget.Global);
+  await config.update('modelReasoningEfforts', efforts, vscode.ConfigurationTarget.Global);
 }
 
 export async function showReasoningConfigUI(
-	secrets: vscode.SecretStorage,
-	modelsService: CrofAIModelsService
+  secrets: vscode.SecretStorage,
+  modelsService: CrofAIModelsService
 ): Promise<void> {
+  const apiKey = await modelsService.ensureApiKey(secrets, false);
+  if (!apiKey) {
+    vscode.window.showInformationMessage('Please configure your CrofAI API key first.');
+    return;
+  }
 
-	const apiKey = await modelsService.ensureApiKey(secrets, false);
-	if (!apiKey) {
-		vscode.window.showInformationMessage('Please configure your CrofAI API key first.');
-		return;
-	}
+  try {
+    const response = await modelsService.fetchModels(apiKey);
+    if (!response?.data || response.data.length === 0) {
+      vscode.window.showInformationMessage('No models available.');
+      return;
+    }
 
-	try {
-		const response = await modelsService.fetchModels(apiKey);
-		if (!response?.data || response.data.length === 0) {
-			vscode.window.showInformationMessage('No models available.');
-			return;
-		}
+    const reasoningModels = response.data.filter(
+      (m) => m.custom_reasoning === true || m.reasoning_effort === true
+    );
 
-		const reasoningModels = response.data.filter(
-			(m) => m.custom_reasoning === true || m.reasoning_effort === true
-		);
+    if (reasoningModels.length === 0) {
+      vscode.window.showInformationMessage('No reasoning models available.');
+      return;
+    }
 
-		if (reasoningModels.length === 0) {
-			vscode.window.showInformationMessage('No reasoning models available.');
-			return;
-		}
+    interface ModelItem {
+      label: string;
+      description: string;
+      modelId: string;
+    }
 
-		interface ModelItem {
-			label: string;
-			description: string;
-			modelId: string;
-		}
+    const modelItems: ModelItem[] = reasoningModels.map((m: CrofAIModel) => {
+      const stored = getModelReasoningEffort(m.id);
+      return {
+        label: m.name || m.id,
+        description: stored ? `$(gear) ${stored}` : '$(circle-outline) default',
+        modelId: m.id,
+      };
+    });
 
-		const modelItems: ModelItem[] = reasoningModels.map((m: CrofAIModel) => {
-			const stored = getModelReasoningEffort(m.id);
-			return {
-				label: m.name || m.id,
-				description: stored ? `$(gear) ${stored}` : '$(circle-outline) default',
-				modelId: m.id,
-			};
-		});
+    const selectedModel = await vscode.window.showQuickPick(modelItems, {
+      placeHolder: 'Select a model to configure reasoning effort',
+      ignoreFocusOut: true,
+    });
 
-		const selectedModel = await vscode.window.showQuickPick(modelItems, {
-			placeHolder: 'Select a model to configure reasoning effort',
-			ignoreFocusOut: true,
-		});
+    if (!selectedModel) {
+      return;
+    }
 
-		if (!selectedModel) {
-			return;
-		}
+    const current = getModelReasoningEffort(selectedModel.modelId);
 
-		const current = getModelReasoningEffort(selectedModel.modelId);
+    interface EffortItem {
+      label: string;
+      description?: string;
+      detail?: string;
+      value: ReasoningEffort | undefined;
+    }
 
-		interface EffortItem {
-			label: string;
-			description?: string;
-			detail?: string;
-			value: ReasoningEffort | undefined;
-		}
+    const effortItems: EffortItem[] = [
+      {
+        label: current === undefined ? '$(check) Default' : 'Default',
+        description: 'inherited from model variant selection',
+        detail:
+          'Use whichever reasoning effort is encoded in the selected model variant (e.g. model#high)',
+        value: undefined,
+      },
+      {
+        label: current === 'none' ? '$(check) None' : 'None',
+        description: 'no thinking tokens',
+        detail: 'Disables reasoning regardless of model variant — fastest, lowest cost',
+        value: 'none' as ReasoningEffort,
+      },
+      {
+        label: current === 'low' ? '$(check) Low' : 'Low',
+        description: 'brief reasoning pass',
+        detail: 'Short reasoning chain — good balance for simple tasks',
+        value: 'low' as ReasoningEffort,
+      },
+      {
+        label: current === 'medium' ? '$(check) Medium' : 'Medium',
+        description: 'standard reasoning depth',
+        detail: 'Balanced reasoning — recommended for most tasks',
+        value: 'medium' as ReasoningEffort,
+      },
+      {
+        label: current === 'high' ? '$(check) High' : 'High',
+        description: 'deep reasoning chain',
+        detail: 'Maximum thinking tokens — best for complex problems, highest cost',
+        value: 'high' as ReasoningEffort,
+      },
+    ];
 
-		const effortItems: EffortItem[] = [
-			{
-				label: current === undefined ? '$(check) Default' : 'Default',
-				description: 'inherited from model variant selection',
-				detail: 'Use whichever reasoning effort is encoded in the selected model variant (e.g. model#high)',
-				value: undefined,
-			},
-			{
-				label: current === 'none' ? '$(check) None' : 'None',
-				description: 'no thinking tokens',
-				detail: 'Disables reasoning regardless of model variant — fastest, lowest cost',
-				value: 'none' as ReasoningEffort,
-			},
-			{
-				label: current === 'low' ? '$(check) Low' : 'Low',
-				description: 'brief reasoning pass',
-				detail: 'Short reasoning chain — good balance for simple tasks',
-				value: 'low' as ReasoningEffort,
-			},
-			{
-				label: current === 'medium' ? '$(check) Medium' : 'Medium',
-				description: 'standard reasoning depth',
-				detail: 'Balanced reasoning — recommended for most tasks',
-				value: 'medium' as ReasoningEffort,
-			},
-			{
-				label: current === 'high' ? '$(check) High' : 'High',
-				description: 'deep reasoning chain',
-				detail: 'Maximum thinking tokens — best for complex problems, highest cost',
-				value: 'high' as ReasoningEffort,
-			},
-		];
+    const selectedEffort = await vscode.window.showQuickPick(effortItems, {
+      placeHolder: `${selectedModel.label} — current: ${current ?? 'default'}`,
+      matchOnDescription: true,
+      ignoreFocusOut: true,
+    });
 
-		const selectedEffort = await vscode.window.showQuickPick(effortItems, {
-			placeHolder: `${selectedModel.label} — current: ${current ?? 'default'}`,
-			matchOnDescription: true,
-			ignoreFocusOut: true,
-		});
+    if (selectedEffort === undefined) {
+      return;
+    }
 
-		if (selectedEffort === undefined) {
-			return;
-		}
-
-		await setModelReasoningEffort(selectedModel.modelId, selectedEffort.value);
-		vscode.window.showInformationMessage(
-			selectedEffort.value
-				? `Reasoning effort for ${selectedModel.modelId} set to ${selectedEffort.value}.`
-				: `Reasoning effort for ${selectedModel.modelId} reset to default.`
-		);
-	} catch (error) {
-		const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-		vscode.window.showErrorMessage(`Failed to configure reasoning effort: ${errorMessage}`);
-	}
+    await setModelReasoningEffort(selectedModel.modelId, selectedEffort.value);
+    vscode.window.showInformationMessage(
+      selectedEffort.value
+        ? `Reasoning effort for ${selectedModel.modelId} set to ${selectedEffort.value}.`
+        : `Reasoning effort for ${selectedModel.modelId} reset to default.`
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    vscode.window.showErrorMessage(`Failed to configure reasoning effort: ${errorMessage}`);
+  }
 }
 
 export async function showTemperatureConfigUI(
   secrets: vscode.SecretStorage,
   modelsService: CrofAIModelsService
 ): Promise<void> {
-
   const apiKey = await modelsService.ensureApiKey(secrets, false);
   if (!apiKey) {
     vscode.window.showInformationMessage('Please configure your CrofAI API key first.');

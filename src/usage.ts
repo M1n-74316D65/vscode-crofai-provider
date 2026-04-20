@@ -10,6 +10,7 @@ export type UsageResponse = z.infer<typeof UsageResponseSchema>;
 
 const USAGE_API_URL = 'https://crof.ai/usage_api/';
 const STATUS_BAR_INTERVAL_MS = 5 * 60 * 1000;
+const FETCH_USAGE_TIMEOUT_MS = 15_000;
 
 export class CrofAIUsageService {
   constructor(private readonly userAgent: string) {}
@@ -21,6 +22,7 @@ export class CrofAIUsageService {
           Authorization: `Bearer ${apiKey}`,
           'User-Agent': this.userAgent,
         },
+        signal: AbortSignal.timeout(FETCH_USAGE_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -48,37 +50,47 @@ export function createUsageStatusBar(
   statusBarItem.command = 'crofai.showUsage';
   context.subscriptions.push(statusBarItem);
 
-  let updatePending = false;
+  let running = false;
+  let queued = false;
 
-  const updateStatus = () => {
-    if (updatePending) {
+  const runUpdate = async () => {
+    const apiKey = await context.secrets.get('crofai.apiKey');
+    if (!apiKey) {
+      statusBarItem.text = '$(pulse) CrofAI';
+      statusBarItem.tooltip = 'CrofAI Provider - Click Manage to configure';
+      statusBarItem.show();
       return;
     }
-    updatePending = true;
-    context.secrets.get('crofai.apiKey').then(async (apiKey) => {
-      updatePending = false;
-      if (!apiKey) {
-        statusBarItem.text = '$(pulse) CrofAI';
-        statusBarItem.tooltip = 'CrofAI Provider - Click Manage to configure';
-        statusBarItem.show();
-        return;
-      }
 
-      const usage = await usageService.fetchUsage(apiKey);
-      if (usage) {
-        const credits = usageService.formatCredits(usage.credits);
-        if (usage.usable_requests !== null) {
-          statusBarItem.text = `$(pulse) CrofAI: ${credits} (${usage.usable_requests} req)`;
-          statusBarItem.tooltip = `CrofAI Usage\nCredits: ${credits}\nRequests left: ${usage.usable_requests}`;
-        } else {
-          statusBarItem.text = `$(pulse) CrofAI: ${credits}`;
-          statusBarItem.tooltip = `CrofAI Usage\nCredits: ${credits}`;
-        }
+    const usage = await usageService.fetchUsage(apiKey);
+    if (usage) {
+      const credits = usageService.formatCredits(usage.credits);
+      if (usage.usable_requests !== null) {
+        statusBarItem.text = `$(pulse) CrofAI: ${credits} (${usage.usable_requests} req)`;
+        statusBarItem.tooltip = `CrofAI Usage\nCredits: ${credits}\nRequests left: ${usage.usable_requests}`;
       } else {
-        statusBarItem.text = '$(pulse) CrofAI';
-        statusBarItem.tooltip = 'CrofAI Provider';
+        statusBarItem.text = `$(pulse) CrofAI: ${credits}`;
+        statusBarItem.tooltip = `CrofAI Usage\nCredits: ${credits}`;
       }
-      statusBarItem.show();
+    } else {
+      statusBarItem.text = '$(pulse) CrofAI';
+      statusBarItem.tooltip = 'CrofAI Provider';
+    }
+    statusBarItem.show();
+  };
+
+  const updateStatus = () => {
+    if (running) {
+      queued = true;
+      return;
+    }
+    running = true;
+    queued = false;
+    runUpdate().finally(() => {
+      running = false;
+      if (queued) {
+        updateStatus();
+      }
     });
   };
 
